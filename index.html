@@ -1,0 +1,272 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <title>Grãos - Sistema Local</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      background-color: #f4f4f4;
+      padding: 20px;
+      color: #333;
+    }
+    h1, h3 {
+      color: #2c3e50;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      background: #fff;
+      margin-top: 20px;
+    }
+    th, td {
+      border: 1px solid #ddd;   
+      padding: 8px;
+    }
+    th {
+      background-color: #3498db;
+      color: white;
+    }
+    .total {
+      font-weight: bold;
+      margin-top: 20px;
+    }
+    input, button, select {
+      margin: 5px 5px 5px 0;
+      padding: 6px;
+      border-radius: 4px;
+      border: 1px solid #ccc;
+    }
+    button {
+      background-color: #2980b9;
+      color: white;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #1c5980;
+    }
+    .formulario {
+      margin-top: 30px;
+      padding: 20px;
+      background: #fff;
+      border-radius: 5px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.1);
+      max-width: 600px;
+    }
+    #graficoContainer {
+      max-width: 800px;
+      margin-top: 40px;
+    }
+  </style>
+</head>
+<body>
+
+  <h1>Gerenciar Dados de Grãos</h1>
+
+  <label for="filtroData">Filtrar por Data:</label>
+  <input type="date" id="filtroData">
+
+  <label for="filtroCorretor">Filtrar por Corretor:</label>
+  <select id="filtroCorretor"><option value="">Todos</option></select>
+
+  <label for="filtroProdutor">Filtrar por Produtor:</label>
+  <select id="filtroProdutor"><option value="">Todos</option></select>
+
+  <button onclick="limparDados()">🗑️ Limpar tudo</button>
+  <button onclick="exportarTabela()">📄 Exportar Tabela Atual</button>
+
+  <table id="tabela"></table>
+  <div class="total" id="totais"></div>
+
+  <div class="formulario">
+    <h3>Adicionar Novo Registro</h3>
+    <input type="text" id="corretor" placeholder="Corretor"><br>
+    <input type="text" id="produtor" placeholder="Produtor"><br>
+    <input type="date" id="dataEmissao"><br>
+    <input type="number" id="milho" placeholder="Milho Comercial (kg)"><br>
+    <input type="number" id="soja" placeholder="Soja Comercial (kg)"><br>
+    <button onclick="adicionarRegistro()">➕ Adicionar</button>
+  </div>
+
+  <div id="graficoContainer">
+    <canvas id="graficoTotais"></canvas>
+  </div>
+
+  <script>
+    let dadosExcel = [];
+    let chart;
+
+    window.onload = () => {
+      const salvos = localStorage.getItem('dadosGraos');
+      if (salvos) {
+        dadosExcel = JSON.parse(salvos);
+        renderizarTabela(dadosExcel);
+        atualizarFiltros();
+      }
+    };
+
+    document.getElementById('filtroData').addEventListener('input', aplicarFiltros);
+    document.getElementById('filtroCorretor').addEventListener('change', aplicarFiltros);
+    document.getElementById('filtroProdutor').addEventListener('change', aplicarFiltros);
+
+    function aplicarFiltros() {
+      const dataFiltro = document.getElementById('filtroData').value;
+      const corretorFiltro = document.getElementById('filtroCorretor').value;
+      const produtorFiltro = document.getElementById('filtroProdutor').value;
+
+      const filtrado = dadosExcel.filter(item => {
+        const dataItem = new Date(item["DATA EMISSÃO"]);
+        return (
+          (dataFiltro === '' || dataItem.toISOString().slice(0,10) === dataFiltro) &&
+          (corretorFiltro === '' || item["CORRETOR"] === corretorFiltro) &&
+          (produtorFiltro === '' || item["PRODUTOR"] === produtorFiltro)
+        );
+      });
+
+      renderizarTabela(filtrado);
+    }
+
+    function atualizarFiltros() {
+      const corretores = [...new Set(dadosExcel.map(d => d["CORRETOR"]).filter(Boolean))];
+      const produtores = [...new Set(dadosExcel.map(d => d["PRODUTOR"]).filter(Boolean))];
+
+      document.getElementById('filtroCorretor').innerHTML = '<option value="">Todos</option>' + corretores.map(c => `<option value="${c}">${c}</option>`).join('');
+      document.getElementById('filtroProdutor').innerHTML = '<option value="">Todos</option>' + produtores.map(p => `<option value="${p}">${p}</option>`).join('');
+    }
+
+    function renderizarTabela(dados) {
+      const tabela = document.getElementById('tabela');
+      tabela.innerHTML = '';
+      if (dados.length === 0) return;
+
+      const colunas = Object.keys(dados[0]);
+      tabela.innerHTML += `<tr>${colunas.map(col => `<th>${col}</th>`).join('')}</tr>`;
+      dados.forEach(linha => {
+        tabela.innerHTML += `<tr>${colunas.map(col => `<td>${linha[col]}</td>`).join('')}</tr>`;
+      });
+
+      const totais = calcularTotais(dados);
+      const linhaTotal = colunas.map(col => {
+        if (col === 'MILHO COMERCIAL') return `<td><strong>${totais.totalMilho.toLocaleString('pt-BR')}</strong></td>`;
+        if (col === 'SOJA COMERCIAL') return `<td><strong>${totais.totalSoja.toLocaleString('pt-BR')}</strong></td>`;
+        if (col === 'Total Geral') return `<td><strong>${totais.totalGeral.toLocaleString('pt-BR')}</strong></td>`;
+        return `<td></td>`;
+      }).join('');
+
+      tabela.innerHTML += `<tr style="background:#ecf0f1">${linhaTotal}</tr>`;
+    }
+
+    function calcularTotais(dados) {
+      let totalMilho = 0, totalSoja = 0, totalGeral = 0;
+      let porCorretor = {};
+
+      dados.forEach(item => {
+        const milho = parseFloat(item["MILHO COMERCIAL"] || 0);
+        const soja = parseFloat(item["SOJA COMERCIAL"] || 0);
+        const corretor = item["CORRETOR"] || "Desconhecido";
+
+        totalMilho += milho;
+        totalSoja += soja;
+        totalGeral += milho + soja;
+
+        if (!porCorretor[corretor]) porCorretor[corretor] = { milho: 0, soja: 0 };
+        porCorretor[corretor].milho += milho;
+        porCorretor[corretor].soja += soja;
+      });
+
+      document.getElementById('totais').innerHTML = `
+        <strong>Totais Gerais:</strong><br>
+        Total Milho: ${totalMilho.toLocaleString('pt-BR')} kg<br>
+        Total Soja: ${totalSoja.toLocaleString('pt-BR')} kg<br>
+        Total Geral: ${totalGeral.toLocaleString('pt-BR')} kg
+      `;
+
+      renderizarGrafico(porCorretor);
+
+      return { totalMilho, totalSoja, totalGeral };
+    }
+
+    function renderizarGrafico(porCorretor) {
+      const labels = Object.keys(porCorretor);
+      const milhoData = labels.map(c => porCorretor[c].milho);
+      const sojaData = labels.map(c => porCorretor[c].soja);
+
+      const ctx = document.getElementById('graficoTotais').getContext('2d');
+      if (chart) chart.destroy();
+      chart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+          labels: labels,
+          datasets: [
+            { label: 'Milho (kg)', data: milhoData, backgroundColor: 'rgba(255, 206, 86, 0.7)' },
+            { label: 'Soja (kg)', data: sojaData, backgroundColor: 'rgba(75, 192, 192, 0.7)' }
+          ]
+        },
+        options: { responsive: true, scales: { y: { beginAtZero: true } } }
+      });
+    }
+
+    function adicionarRegistro() {
+      const novo = {
+        "CORRETOR": document.getElementById('corretor').value,
+        "PRODUTOR": document.getElementById('produtor').value,
+        "DATA EMISSÃO": document.getElementById('dataEmissao').value,
+        "MILHO COMERCIAL": parseFloat(document.getElementById('milho').value || 0),
+        "SOJA COMERCIAL": parseFloat(document.getElementById('soja').value || 0),
+        "Total Geral": parseFloat(document.getElementById('milho').value || 0) + parseFloat(document.getElementById('soja').value || 0)
+      };
+      dadosExcel.push(novo);
+      salvarDados();
+      renderizarTabela(dadosExcel);
+      atualizarFiltros();
+      document.getElementById('corretor').value = '';
+      document.getElementById('produtor').value = '';
+      document.getElementById('dataEmissao').value = '';
+      document.getElementById('milho').value = '';
+      document.getElementById('soja').value = '';
+    }
+
+    function salvarDados() {
+      localStorage.setItem('dadosGraos', JSON.stringify(dadosExcel));
+    }
+
+    function limparDados() {
+      if (confirm("Tem certeza que deseja limpar todos os dados?")) {
+        localStorage.removeItem('dadosGraos');
+        dadosExcel = [];
+        document.getElementById('tabela').innerHTML = '';
+        document.getElementById('totais').innerHTML = '';
+        if (chart) chart.destroy();
+        atualizarFiltros();
+      }
+    }
+
+    function exportarTabela() {
+      const dataFiltro = document.getElementById('filtroData').value;
+      const filtroCorretor = document.getElementById('filtroCorretor').value;
+      const filtroProdutor = document.getElementById('filtroProdutor').value;
+
+      const filtrados = dadosExcel.filter(item => {
+        const dataItem = new Date(item["DATA EMISSÃO"]);
+        return (
+          (!dataFiltro || dataItem.toISOString().slice(0, 10) === dataFiltro) &&
+          (!filtroCorretor || item["CORRETOR"] === filtroCorretor) &&
+          (!filtroProdutor || item["PRODUTOR"] === filtroProdutor)
+        );
+      });
+
+      if (filtrados.length === 0) {
+        alert("Nenhum dado para exportar com os filtros atuais.");
+        return;
+      }
+
+      const ws = XLSX.utils.json_to_sheet(filtrados);
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, "DadosFiltrados");
+      XLSX.writeFile(wb, "dados_filtrados.xlsx");
+    }
+  </script>
+</body>
+</html>
